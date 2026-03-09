@@ -115,3 +115,89 @@ chacha20_quarter_round:
     sw   t3, 0(a4)          # state[w] = d
 
     ret
+
+# =============================================================================
+# inner_block
+#
+# Aplica 8 quarter rounds sobre el estado: 4 de columna + 4 de diagonal.
+# RFC 8439, Sección 2.3.1:
+#
+#   Column rounds:
+#     QUARTERROUND(0,  4,  8, 12)
+#     QUARTERROUND(1,  5,  9, 13)
+#     QUARTERROUND(2,  6, 10, 14)
+#     QUARTERROUND(3,  7, 11, 15)
+#   Diagonal rounds:
+#     QUARTERROUND(0,  5, 10, 15)
+#     QUARTERROUND(1,  6, 11, 12)
+#     QUARTERROUND(2,  7,  8, 13)
+#     QUARTERROUND(3,  4,  9, 14)
+#
+# Prototipo C:
+#   void inner_block(uint32_t state[16]);
+#
+# Parámetros:
+#   a0 = uint32_t *state   puntero al estado de 16 palabras (modificado in-place)
+#
+# Registros callee-saved usados: s0 (para preservar el puntero state entre llamadas)
+# =============================================================================
+.globl inner_block
+inner_block:
+    addi sp, sp, -8
+    sw   ra, 4(sp)
+    sw   s0, 0(sp)
+
+    mv   s0, a0             # s0 = state (preservado durante todas las llamadas)
+
+    # ------------------------------------------------------------------
+    # Column rounds
+    # ------------------------------------------------------------------
+
+    # QUARTERROUND(0, 4, 8, 12)
+    mv   a0, s0
+    li   a1, 0;  li a2,  4;  li a3,  8;  li a4, 12
+    call chacha20_quarter_round
+
+    # QUARTERROUND(1, 5, 9, 13)
+    mv   a0, s0
+    li   a1, 1;  li a2,  5;  li a3,  9;  li a4, 13
+    call chacha20_quarter_round
+
+    # QUARTERROUND(2, 6, 10, 14)
+    mv   a0, s0
+    li   a1, 2;  li a2,  6;  li a3, 10;  li a4, 14
+    call chacha20_quarter_round
+
+    # QUARTERROUND(3, 7, 11, 15)
+    mv   a0, s0
+    li   a1, 3;  li a2,  7;  li a3, 11;  li a4, 15
+    call chacha20_quarter_round
+
+    # ------------------------------------------------------------------
+    # Diagonal rounds
+    # ------------------------------------------------------------------
+
+    # QUARTERROUND(0, 5, 10, 15)
+    mv   a0, s0
+    li   a1, 0;  li a2,  5;  li a3, 10;  li a4, 15
+    call chacha20_quarter_round
+
+    # QUARTERROUND(1, 6, 11, 12)
+    mv   a0, s0
+    li   a1, 1;  li a2,  6;  li a3, 11;  li a4, 12
+    call chacha20_quarter_round
+
+    # QUARTERROUND(2, 7, 8, 13)
+    mv   a0, s0
+    li   a1, 2;  li a2,  7;  li a3,  8;  li a4, 13
+    call chacha20_quarter_round
+
+    # QUARTERROUND(3, 4, 9, 14)
+    mv   a0, s0
+    li   a1, 3;  li a2,  4;  li a3,  9;  li a4, 14
+    call chacha20_quarter_round
+
+    lw   s0, 0(sp)
+    lw   ra, 4(sp)
+    addi sp, sp, 8
+    ret
