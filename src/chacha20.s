@@ -233,7 +233,7 @@ inner_block:
 #   sp+80     : s0
 #   sp+84     : ra
 #
-# Estado actual: inicialización + copia estado inicial + 10 rondas.
+# Estado actual: completo (inicialización + 10 rondas + suma estado inicial).
 # =============================================================================
 .globl chacha20_block
 chacha20_block:
@@ -305,6 +305,25 @@ chacha20_block:
     call inner_block
     addi s4, s4, -1
     bnez s4, .Lrounds_loop
+
+    # ------------------------------------------------------------------
+    # working_state += initial_state  (mod 2^32, palabra a palabra)
+    # RFC 8439: "add the original input words to the output words"
+    # ------------------------------------------------------------------
+    li   t1, 0
+.Ladd_loop:
+    slli t2, t1, 2
+    add  t3, s3, t2         # &working_state[i]
+    lw   t0, 0(t3)
+    add  t4, sp, t2         # &initial_state[i]
+    lw   t5, 0(t4)
+    add  t0, t0, t5         # working_state[i] += initial_state[i] mod 2^32
+    sw   t0, 0(t3)
+    addi t1, t1, 1
+    li   t2, 16
+    blt  t1, t2, .Ladd_loop
+
+    # output ya contiene los 64 bytes del keystream en little-endian
 
     lw   s4,  64(sp)
     lw   s3,  68(sp)
