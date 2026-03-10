@@ -201,3 +201,79 @@ inner_block:
     lw   ra, 4(sp)
     addi sp, sp, 8
     ret
+
+# =============================================================================
+# chacha20_block
+#
+# Genera 64 bytes de keystream a partir de key, counter y nonce.
+# RFC 8439, Sección 2.3.
+#
+# Prototipo C:
+#   void chacha20_block(const uint32_t *key, uint32_t counter,
+#                       const uint32_t *nonce, uint32_t *output);
+#
+# Parámetros:
+#   a0 = const uint32_t *key    puntero a 8 palabras (256-bit key)
+#   a1 = uint32_t counter       contador de bloque (32-bit)
+#   a2 = const uint32_t *nonce  puntero a 3 palabras (96-bit nonce)
+#   a3 = uint32_t *output       puntero al buffer de salida (64 bytes)
+#
+# Layout del estado (16 palabras x 4 bytes = 64 bytes):
+#   state[ 0.. 3] = constantes "expa nd 3 2-by te k"
+#   state[ 4..11] = key[0..7]
+#   state[12]     = counter
+#   state[13..15] = nonce[0..2]
+#
+# Estado actual: inicialización del estado.
+# =============================================================================
+.globl chacha20_block
+chacha20_block:
+    addi sp, sp, -16
+    sw   ra, 12(sp)
+    sw   s0,  8(sp)
+    sw   s1,  4(sp)
+    sw   s2,  0(sp)
+
+    mv   s0, a0             # s0 = key
+    mv   s1, a1             # s1 = counter
+    mv   s2, a2             # s2 = nonce
+                            # a3 = output (no se mueve, se usa directo)
+
+    # ------------------------------------------------------------------
+    # Constantes ASCII "expa nd 3 2-by te k" (RFC 8439, sec 2.3)
+    # ------------------------------------------------------------------
+    li   t0, 0x61707865;  sw t0,  0(a3)   # "expa"
+    li   t0, 0x3320646e;  sw t0,  4(a3)   # "nd 3"
+    li   t0, 0x79622d32;  sw t0,  8(a3)   # "2-by"
+    li   t0, 0x6b206574;  sw t0, 12(a3)   # "te k"
+
+    # ------------------------------------------------------------------
+    # Key[0..7] → state[4..11]
+    # ------------------------------------------------------------------
+    lw   t0,  0(s0);  sw t0, 16(a3)
+    lw   t0,  4(s0);  sw t0, 20(a3)
+    lw   t0,  8(s0);  sw t0, 24(a3)
+    lw   t0, 12(s0);  sw t0, 28(a3)
+    lw   t0, 16(s0);  sw t0, 32(a3)
+    lw   t0, 20(s0);  sw t0, 36(a3)
+    lw   t0, 24(s0);  sw t0, 40(a3)
+    lw   t0, 28(s0);  sw t0, 44(a3)
+
+    # ------------------------------------------------------------------
+    # Counter → state[12]
+    # ------------------------------------------------------------------
+    sw   s1, 48(a3)
+
+    # ------------------------------------------------------------------
+    # Nonce[0..2] → state[13..15]
+    # ------------------------------------------------------------------
+    lw   t0,  0(s2);  sw t0, 52(a3)
+    lw   t0,  4(s2);  sw t0, 56(a3)
+    lw   t0,  8(s2);  sw t0, 60(a3)
+
+    lw   s2,  0(sp)
+    lw   s1,  4(sp)
+    lw   s0,  8(sp)
+    lw   ra, 12(sp)
+    addi sp, sp, 16
+    ret
