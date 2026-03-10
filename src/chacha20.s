@@ -224,56 +224,93 @@ inner_block:
 #   state[12]     = counter
 #   state[13..15] = nonce[0..2]
 #
-# Estado actual: inicialización del estado.
+# Stack frame (88 bytes):
+#   sp+ 0..63 : initial_state[16]
+#   sp+64     : s4
+#   sp+68     : s3
+#   sp+72     : s2
+#   sp+76     : s1
+#   sp+80     : s0
+#   sp+84     : ra
+#
+# Estado actual: inicialización + copia estado inicial + 10 rondas.
 # =============================================================================
 .globl chacha20_block
 chacha20_block:
-    addi sp, sp, -16
-    sw   ra, 12(sp)
-    sw   s0,  8(sp)
-    sw   s1,  4(sp)
-    sw   s2,  0(sp)
+    addi sp, sp, -88
+    sw   ra,  84(sp)
+    sw   s0,  80(sp)
+    sw   s1,  76(sp)
+    sw   s2,  72(sp)
+    sw   s3,  68(sp)
+    sw   s4,  64(sp)
 
     mv   s0, a0             # s0 = key
     mv   s1, a1             # s1 = counter
     mv   s2, a2             # s2 = nonce
-                            # a3 = output (no se mueve, se usa directo)
+    mv   s3, a3             # s3 = output (working_state)
 
     # ------------------------------------------------------------------
     # Constantes ASCII "expa nd 3 2-by te k" (RFC 8439, sec 2.3)
     # ------------------------------------------------------------------
-    li   t0, 0x61707865;  sw t0,  0(a3)   # "expa"
-    li   t0, 0x3320646e;  sw t0,  4(a3)   # "nd 3"
-    li   t0, 0x79622d32;  sw t0,  8(a3)   # "2-by"
-    li   t0, 0x6b206574;  sw t0, 12(a3)   # "te k"
+    li   t0, 0x61707865;  sw t0,  0(s3)   # "expa"
+    li   t0, 0x3320646e;  sw t0,  4(s3)   # "nd 3"
+    li   t0, 0x79622d32;  sw t0,  8(s3)   # "2-by"
+    li   t0, 0x6b206574;  sw t0, 12(s3)   # "te k"
 
     # ------------------------------------------------------------------
     # Key[0..7] → state[4..11]
     # ------------------------------------------------------------------
-    lw   t0,  0(s0);  sw t0, 16(a3)
-    lw   t0,  4(s0);  sw t0, 20(a3)
-    lw   t0,  8(s0);  sw t0, 24(a3)
-    lw   t0, 12(s0);  sw t0, 28(a3)
-    lw   t0, 16(s0);  sw t0, 32(a3)
-    lw   t0, 20(s0);  sw t0, 36(a3)
-    lw   t0, 24(s0);  sw t0, 40(a3)
-    lw   t0, 28(s0);  sw t0, 44(a3)
+    lw   t0,  0(s0);  sw t0, 16(s3)
+    lw   t0,  4(s0);  sw t0, 20(s3)
+    lw   t0,  8(s0);  sw t0, 24(s3)
+    lw   t0, 12(s0);  sw t0, 28(s3)
+    lw   t0, 16(s0);  sw t0, 32(s3)
+    lw   t0, 20(s0);  sw t0, 36(s3)
+    lw   t0, 24(s0);  sw t0, 40(s3)
+    lw   t0, 28(s0);  sw t0, 44(s3)
 
     # ------------------------------------------------------------------
     # Counter → state[12]
     # ------------------------------------------------------------------
-    sw   s1, 48(a3)
+    sw   s1, 48(s3)
 
     # ------------------------------------------------------------------
     # Nonce[0..2] → state[13..15]
     # ------------------------------------------------------------------
-    lw   t0,  0(s2);  sw t0, 52(a3)
-    lw   t0,  4(s2);  sw t0, 56(a3)
-    lw   t0,  8(s2);  sw t0, 60(a3)
+    lw   t0,  0(s2);  sw t0, 52(s3)
+    lw   t0,  4(s2);  sw t0, 56(s3)
+    lw   t0,  8(s2);  sw t0, 60(s3)
 
-    lw   s2,  0(sp)
-    lw   s1,  4(sp)
-    lw   s0,  8(sp)
-    lw   ra, 12(sp)
-    addi sp, sp, 16
+    # ------------------------------------------------------------------
+    # Copiar estado inicial al stack: initial_state = sp+0..sp+63
+    # ------------------------------------------------------------------
+    li   t1, 0
+.Lcopy_loop:
+    slli t2, t1, 2
+    add  t3, s3, t2         # &output[i]
+    lw   t0, 0(t3)
+    add  t3, sp, t2         # &initial_state[i]
+    sw   t0, 0(t3)
+    addi t1, t1, 1
+    li   t2, 16
+    blt  t1, t2, .Lcopy_loop
+
+    # ------------------------------------------------------------------
+    # Ejecutar inner_block 10 veces sobre working_state
+    # ------------------------------------------------------------------
+    li   s4, 10
+.Lrounds_loop:
+    mv   a0, s3
+    call inner_block
+    addi s4, s4, -1
+    bnez s4, .Lrounds_loop
+
+    lw   s4,  64(sp)
+    lw   s3,  68(sp)
+    lw   s2,  72(sp)
+    lw   s1,  76(sp)
+    lw   s0,  80(sp)
+    lw   ra,  84(sp)
+    addi sp, sp, 88
     ret
