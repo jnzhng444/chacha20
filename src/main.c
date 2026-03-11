@@ -6,6 +6,8 @@
  * Declaraciones de funciones en ensamblador (chacha20.s)
  * ========================================================================= */
 extern void chacha20_quarter_round(uint32_t *state, int x, int y, int z, int w);
+extern void chacha20_block(const uint32_t *key, uint32_t counter,
+                           const uint32_t *nonce, uint32_t *output);
 
 /* Salida por UART - dirección 0x10000000 en QEMU virt */
 static volatile uint8_t * const UART = (volatile uint8_t *)0x10000000;
@@ -110,6 +112,45 @@ static void test_quarter_round_estado(void) {
 }
 
 /* =========================================================================
+ * Test 3: chacha20_block - RFC 8439, sección 2.3.2
+ *
+ *   Key     = 00 01 02 ... 1f  (32 bytes)
+ *   Counter = 1
+ *   Nonce   = 00 00 00 09  00 00 00 4a  00 00 00 00
+ *
+ *   Salida esperada (16 palabras en little-endian):
+ *     e4e7f110  15593bd1  1fdd0f50  c47120a3
+ *     c7f4d1c7  0368c033  9aaa2204  4e6cd4c3
+ *     466482d2  09aa9f07  05d7c214  a2028bd9
+ *     d19c12b5  b94e16de  e883d0cb  4e3c50a2
+ * ========================================================================= */
+static void test_chacha20_block(void) {
+    uart_puts("\n[Test 3] chacha20_block - RFC 8439 sec 2.3.2\n");
+
+    static const uint32_t key[8] = {
+        0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
+        0x13121110, 0x17161514, 0x1b1a1918, 0x1f1e1d1c
+    };
+    static const uint32_t nonce[3] = {
+        0x09000000, 0x4a000000, 0x00000000
+    };
+    static uint32_t output[16];
+
+    chacha20_block(key, 1, nonce, output);
+
+    static const uint32_t expected[16] = {
+        0xe4e7f110, 0x15593bd1, 0x1fdd0f50, 0xc47120a3,
+        0xc7f4d1c7, 0x0368c033, 0x9aaa2204, 0x4e6cd4c3,
+        0x466482d2, 0x09aa9f07, 0x05d7c214, 0xa2028bd9,
+        0xd19c12b5, 0xb94e16de, 0xe883d0cb, 0x4e3c50a2
+    };
+
+    for (int i = 0; i < 16; i++) {
+        check("word", output[i], expected[i]);
+    }
+}
+
+/* =========================================================================
  * Entry point
  * ========================================================================= */
 void main(void) {
@@ -119,6 +160,7 @@ void main(void) {
 
     test_quarter_round_basico();
     test_quarter_round_estado();
+    test_chacha20_block();
 
     uart_puts("\n========================================\n");
     uart_puts("Resultado: ");
