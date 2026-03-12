@@ -286,7 +286,7 @@ chacha20_block:
     # Copiar estado inicial al stack: initial_state = sp+0..sp+63
     # ------------------------------------------------------------------
     li   t1, 0
-.Lcopy_loop:
+copy_initial_state:
     slli t2, t1, 2
     add  t3, s3, t2         # &output[i]
     lw   t0, 0(t3)
@@ -294,24 +294,24 @@ chacha20_block:
     sw   t0, 0(t3)
     addi t1, t1, 1
     li   t2, 16
-    blt  t1, t2, .Lcopy_loop
+    blt  t1, t2, copy_initial_state
 
     # ------------------------------------------------------------------
     # Ejecutar inner_block 10 veces sobre working_state
     # ------------------------------------------------------------------
     li   s4, 10
-.Lrounds_loop:
+rounds_loop:
     mv   a0, s3
     call inner_block
     addi s4, s4, -1
-    bnez s4, .Lrounds_loop
+    bnez s4, rounds_loop
 
     # ------------------------------------------------------------------
     # working_state += initial_state  (mod 2^32, palabra a palabra)
     # RFC 8439: "add the original input words to the output words"
     # ------------------------------------------------------------------
     li   t1, 0
-.Ladd_loop:
+add_initial_state:
     slli t2, t1, 2
     add  t3, s3, t2         # &working_state[i]
     lw   t0, 0(t3)
@@ -321,7 +321,7 @@ chacha20_block:
     sw   t0, 0(t3)
     addi t1, t1, 1
     li   t2, 16
-    blt  t1, t2, .Ladd_loop
+    blt  t1, t2, add_initial_state
 
     # output ya contiene los 64 bytes del keystream en little-endian
 
