@@ -356,7 +356,7 @@ add_initial_state:
 #   a4 = uint8_t        *ciphertext
 #   a5 = uint32_t        len         (longitud en bytes)
 #
-# Stack frame (80 bytes):
+# Stack frame (92 bytes):
 #   sp+ 0..63 : keystream[64]   buffer temporal del keystream
 #   sp+64     : s5
 #   sp+68     : s4

@@ -8,6 +8,10 @@
 extern void chacha20_quarter_round(uint32_t *state, int x, int y, int z, int w);
 extern void chacha20_block(const uint32_t *key, uint32_t counter,
                            const uint32_t *nonce, uint32_t *output);
+extern void chacha20_encrypt(const uint32_t *key, uint32_t counter,
+                             const uint32_t *nonce,
+                             const uint8_t *plaintext, uint8_t *ciphertext,
+                             uint32_t len);
 
 /* Salida por UART - dirección 0x10000000 en QEMU virt */
 static volatile uint8_t * const UART = (volatile uint8_t *)0x10000000;
@@ -151,6 +155,55 @@ static void test_chacha20_block(void) {
 }
 
 /* =========================================================================
+ * Test 4: chacha20_encrypt - RFC 8439, sección 2.4.2
+ *
+ * Cifra el texto "Sunscreen" (114 bytes, 2 bloques) y verifica los
+ * primeros bytes del resultado contra el ciphertext del RFC.
+ *
+ * Key     = 00 01 02 ... 1f
+ * Nonce   = 00 00 00 00  00 00 00 4a  00 00 00 00
+ * Counter = 1
+ * ========================================================================= */
+static void test_chacha20_encrypt(void) {
+    uart_puts("\n[Test 4] chacha20_encrypt - RFC 8439 sec 2.4.2\n");
+
+    static const uint32_t key[8] = {
+        0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
+        0x13121110, 0x17161514, 0x1b1a1918, 0x1f1e1d1c
+    };
+    static const uint32_t nonce[3] = {
+        0x00000000, 0x4a000000, 0x00000000
+    };
+
+    /* Plaintext "Ladies and Gentlemen of the class of '99..." (RFC 8439) */
+    static const uint8_t plaintext[114] = {
+        0x4c,0x61,0x64,0x69,0x65,0x73,0x20,0x61,0x6e,0x64,0x20,0x47,0x65,0x6e,0x74,0x6c,
+        0x65,0x6d,0x65,0x6e,0x20,0x6f,0x66,0x20,0x74,0x68,0x65,0x20,0x63,0x6c,0x61,0x73,
+        0x73,0x20,0x6f,0x66,0x20,0x27,0x39,0x39,0x3a,0x20,0x49,0x66,0x20,0x49,0x20,0x63,
+        0x6f,0x75,0x6c,0x64,0x20,0x6f,0x66,0x66,0x65,0x72,0x20,0x79,0x6f,0x75,0x20,0x6f,
+        0x6e,0x6c,0x79,0x20,0x6f,0x6e,0x65,0x20,0x74,0x69,0x70,0x20,0x66,0x6f,0x72,0x20,
+        0x74,0x68,0x65,0x20,0x66,0x75,0x74,0x75,0x72,0x65,0x2c,0x20,0x73,0x75,0x6e,0x73,
+        0x63,0x72,0x65,0x65,0x6e,0x20,0x77,0x6f,0x75,0x6c,0x64,0x20,0x62,0x65,0x20,0x69,
+        0x74,0x2e
+    };
+    static uint8_t ciphertext[114];
+
+    chacha20_encrypt(key, 1, nonce, plaintext, ciphertext, 114);
+
+    /* Primeros 4 bytes esperados del bloque 1 (RFC 8439): 6e 2e 35 9a */
+    check("ct[0]", ciphertext[0],  0x6e);
+    check("ct[1]", ciphertext[1],  0x2e);
+    check("ct[2]", ciphertext[2],  0x35);
+    check("ct[3]", ciphertext[3],  0x9a);
+
+    /* Primeros 4 bytes esperados del bloque 2 (RFC 8439): 07 ca 0d bf */
+    check("ct[64]", ciphertext[64], 0x07);
+    check("ct[65]", ciphertext[65], 0xca);
+    check("ct[66]", ciphertext[66], 0x0d);
+    check("ct[67]", ciphertext[67], 0xbf);
+}
+
+/* =========================================================================
  * Entry point
  * ========================================================================= */
 void main(void) {
@@ -161,6 +214,7 @@ void main(void) {
     test_quarter_round_basico();
     test_quarter_round_estado();
     test_chacha20_block();
+    test_chacha20_encrypt();
 
     uart_puts("\n========================================\n");
     uart_puts("Resultado: ");
