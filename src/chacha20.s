@@ -423,6 +423,8 @@ xor_done:
     add  s4, s4, t0         # ciphertext += bytes_procesados
     sub  s5, s5, t0         # len        -= bytes_procesados
 
+    addi s1, s1, 1          # siguiente bloque
+
     j    encrypt_block_loop
 
 encrypt_done:
