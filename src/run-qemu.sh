@@ -22,6 +22,7 @@
 echo "Iniciando QEMU (rv32im, virt) con servidor GDB en puerto 1234..."
 echo ""
 echo "En otra terminal, ejecuta:"
+echo "  docker exec -it rvqemu /bin/bash"
 echo "  gdb-multiarch chacha20.elf"
 echo "  (gdb) target remote :1234"
 echo "  (gdb) break main"
