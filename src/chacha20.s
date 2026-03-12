@@ -333,3 +333,105 @@ add_initial_state:
     lw   ra,  84(sp)
     addi sp, sp, 88
     ret
+
+# =============================================================================
+# chacha20_encrypt
+#
+# Cifra (o descifra) un mensaje de longitud arbitraria.
+# RFC 8439, Sección 2.4:
+#   - Por cada bloque de 64 bytes: generar keystream con chacha20_block
+#   - XOR del keystream con el bloque de plaintext → ciphertext
+#
+# Prototipo C:
+#   void chacha20_encrypt(const uint32_t *key, uint32_t counter,
+#                         const uint32_t *nonce,
+#                         const uint8_t *plaintext, uint8_t *ciphertext,
+#                         uint32_t len);
+#
+# Parámetros:
+#   a0 = const uint32_t *key
+#   a1 = uint32_t counter
+#   a2 = const uint32_t *nonce
+#   a3 = const uint8_t  *plaintext
+#   a4 = uint8_t        *ciphertext
+#   a5 = uint32_t        len         (longitud en bytes)
+#
+# Stack frame (80 bytes):
+#   sp+ 0..63 : keystream[64]   buffer temporal del keystream
+#   sp+64     : s5
+#   sp+68     : s4
+#   sp+72     : s3
+#   sp+76     : s2
+#   sp+80     : s1
+#   sp+84     : s0
+#   sp+88     : ra
+# =============================================================================
+.globl chacha20_encrypt
+chacha20_encrypt:
+    addi sp, sp, -92
+    sw   ra,  88(sp)
+    sw   s0,  84(sp)
+    sw   s1,  80(sp)
+    sw   s2,  76(sp)
+    sw   s3,  72(sp)
+    sw   s4,  68(sp)
+    sw   s5,  64(sp)
+
+    mv   s0, a0             # s0 = key
+    mv   s1, a1             # s1 = counter
+    mv   s2, a2             # s2 = nonce
+    mv   s3, a3             # s3 = plaintext
+    mv   s4, a4             # s4 = ciphertext
+    mv   s5, a5             # s5 = len (bytes restantes)
+
+encrypt_block_loop:
+    beqz s5, encrypt_done   # si len == 0 terminar
+
+    # generar keystream para este bloque
+
+    mv   a0, s0             # key
+    mv   a1, s1             # counter 
+    mv   a2, s2             # nonce
+    addi a3, sp, 0          # &keystream (en el stack)
+    call chacha20_block
+
+    # XOR byte a byte: ciphertext[i] = plaintext[i] ^ keystream[i]
+    li   t0, 0              # i = 0
+    li   t1, 64             # tamaño de un bloque
+
+xor_loop:
+    bgeu t0, s5, xor_done   # si i >= bytes_restantes terminar
+    bge  t0, t1, xor_done   # si i >= 64 terminar bloque
+
+    add  t2, s3, t0         # &plaintext[i]
+    lbu  t3, 0(t2)          # t3 = plaintext[i]
+
+    add  t2, sp, t0         # &keystream[i]
+    lbu  t4, 0(t2)          # t4 = keystream[i]
+
+    xor  t3, t3, t4         # t3 = plaintext[i] ^ keystream[i]
+
+    add  t2, s4, t0         # &ciphertext[i]
+    sb   t3, 0(t2)          # ciphertext[i] = resultado
+
+    addi t0, t0, 1
+    j    xor_loop
+
+xor_done:
+    # avanzar punteros y reducir bytes restantes
+    add  s3, s3, t0         # plaintext  += bytes_procesados
+    add  s4, s4, t0         # ciphertext += bytes_procesados
+    sub  s5, s5, t0         # len        -= bytes_procesados
+
+    j    encrypt_block_loop
+
+encrypt_done:
+    lw   s5,  64(sp)
+    lw   s4,  68(sp)
+    lw   s3,  72(sp)
+    lw   s2,  76(sp)
+    lw   s1,  80(sp)
+    lw   s0,  84(sp)
+    lw   ra,  88(sp)
+    addi sp, sp, 92
+    ret
