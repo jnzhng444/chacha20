@@ -24,11 +24,24 @@ static void uart_puts(const char *s) {
     while (*s) uart_putc(*s++);
 }
 
-static void uart_puthex32(uint32_t v) {
+/* Imprime uint32 en hex SIN prefijo "0x" (estilo RFC: e4e7f110) */
+static void uart_puthex32_bare(uint32_t v) {
     const char hex[] = "0123456789abcdef";
-    uart_puts("0x");
     for (int i = 28; i >= 0; i -= 4)
         uart_putc(hex[(v >> i) & 0xF]);
+}
+
+/* Imprime uint32 en hex CON prefijo "0x" (estilo checks: 0xe4e7f110) */
+static void uart_puthex32(uint32_t v) {
+    uart_puts("0x");
+    uart_puthex32_bare(v);
+}
+
+/* Imprime uint8 en hex de 2 dígitos (sin prefijo) */
+static void uart_puthex8(uint8_t v) {
+    const char hex[] = "0123456789abcdef";
+    uart_putc(hex[(v >> 4) & 0xF]);
+    uart_putc(hex[v & 0xF]);
 }
 
 static void uart_putu(uint32_t n) {
@@ -39,6 +52,40 @@ static void uart_putu(uint32_t n) {
     while (i > 0) uart_putc(buf[--i]);
 }
 
+/* Imprime 16 palabras en formato 4x4 (estilo RFC, sin prefijo 0x) */
+static void uart_print_state(const uint32_t *s) {
+    for (int row = 0; row < 4; row++) {
+        uart_puts("    ");
+        for (int col = 0; col < 4; col++) {
+            uart_puthex32_bare(s[row * 4 + col]);
+            if (col < 3) uart_puts("  ");
+        }
+        uart_putc('\n');
+    }
+}
+
+/* Imprime N bytes en hex, 16 por fila */
+static void uart_print_bytes(const uint8_t *data, uint32_t len) {
+    for (uint32_t i = 0; i < len; i++) {
+        if (i % 16 == 0) uart_puts("    ");
+        uart_puthex8(data[i]);
+        if (i % 16 == 15 || i == len - 1)
+            uart_putc('\n');
+        else
+            uart_putc(' ');
+    }
+}
+
+/* Imprime N bytes como texto ASCII (no imprimibles se muestran como '.') */
+static void uart_print_ascii(const uint8_t *data, uint32_t len) {
+    uart_puts("    \"");
+    for (uint32_t i = 0; i < len; i++) {
+        uint8_t c = data[i];
+        uart_putc((c >= 0x20 && c <= 0x7e) ? (char)c : '.');
+    }
+    uart_puts("\"\n");
+}
+
 /* =========================================================================
  * Framework de tests
  * ========================================================================= */
@@ -47,7 +94,7 @@ static int tests_passed = 0;
 
 static void check(const char *label, uint32_t got, uint32_t expected) {
     tests_run++;
-    uart_puts("  ");
+    uart_puts("    ");
     uart_puts(label);
     uart_puts(": got=");
     uart_puthex32(got);
@@ -61,14 +108,28 @@ static void check(const char *label, uint32_t got, uint32_t expected) {
     }
 }
 
+/* Igual que check pero para bytes (imprime en 2 dígitos hex) */
+static void check_byte(const char *label, uint8_t got, uint8_t expected) {
+    tests_run++;
+    uart_puts("    ");
+    uart_puts(label);
+    uart_puts(": got=0x");
+    uart_puthex8(got);
+    uart_puts("  expected=0x");
+    uart_puthex8(expected);
+    if (got == expected) {
+        uart_puts("  [PASS]\n");
+        tests_passed++;
+    } else {
+        uart_puts("  [FAIL]\n");
+    }
+}
+
 /* =========================================================================
  * Test 1: Quarter Round aislado - RFC 8439, sección 2.1.1
- *
- *   Entrada:  a=0x11111111  b=0x01020304  c=0x9b8d6f43  d=0x01234567
- *   Esperado: a=0xea2a92f4  b=0xcb1cf8ce  c=0x4581472e  d=0x5881c4bb
  * ========================================================================= */
 static void test_quarter_round_basico(void) {
-    uart_puts("\n[Test 1] Quarter Round - RFC 8439 sec 2.1.1\n");
+    uart_puts("\n[Test 1] Quarter Round aislado - RFC 8439 sec 2.1.1\n");
 
     static uint32_t state[4] = {
         0x11111111,
@@ -77,8 +138,23 @@ static void test_quarter_round_basico(void) {
         0x01234567
     };
 
+    uart_puts("  Entrada:\n");
+    uart_puts("    a="); uart_puthex32(state[0]);
+    uart_puts("  b="); uart_puthex32(state[1]);
+    uart_puts("  c="); uart_puthex32(state[2]);
+    uart_puts("  d="); uart_puthex32(state[3]);
+    uart_putc('\n');
+
     chacha20_quarter_round(state, 0, 1, 2, 3);
 
+    uart_puts("  Salida:\n");
+    uart_puts("    a="); uart_puthex32(state[0]);
+    uart_puts("  b="); uart_puthex32(state[1]);
+    uart_puts("  c="); uart_puthex32(state[2]);
+    uart_puts("  d="); uart_puthex32(state[3]);
+    uart_putc('\n');
+
+    uart_puts("  Verificacion:\n");
     check("a", state[0], 0xea2a92f4);
     check("b", state[1], 0xcb1cf8ce);
     check("c", state[2], 0x4581472e);
@@ -90,12 +166,6 @@ static void test_quarter_round_basico(void) {
  *
  *   Aplica QUARTERROUND(2, 7, 8, 13) sobre un estado de 16 palabras.
  *   Solo cambian las posiciones 2, 7, 8 y 13.
- *
- *   Esperado:
- *     pos 2  → 0xbdb886dc
- *     pos 7  → 0xcfacafd2
- *     pos 8  → 0xe46bea80
- *     pos 13 → 0xccc07c79
  * ========================================================================= */
 static void test_quarter_round_estado(void) {
     uart_puts("\n[Test 2] Quarter Round en estado 4x4 - RFC 8439 sec 2.2.1\n");
@@ -107,8 +177,15 @@ static void test_quarter_round_estado(void) {
         0x5c971061, 0x3d631689, 0x2098d9d6, 0x91dbd320
     };
 
+    uart_puts("  Estado antes (QUARTERROUND(2, 7, 8, 13)):\n");
+    uart_print_state(state);
+
     chacha20_quarter_round(state, 2, 7, 8, 13);
 
+    uart_puts("  Estado despues:\n");
+    uart_print_state(state);
+
+    uart_puts("  Verificacion (posiciones 2, 7, 8, 13):\n");
     check("state[ 2]", state[2],  0xbdb886dc);
     check("state[ 7]", state[7],  0xcfacafd2);
     check("state[ 8]", state[8],  0xe46bea80);
@@ -121,12 +198,6 @@ static void test_quarter_round_estado(void) {
  *   Key     = 00 01 02 ... 1f  (32 bytes)
  *   Counter = 1
  *   Nonce   = 00 00 00 09  00 00 00 4a  00 00 00 00
- *
- *   Salida esperada (16 palabras en little-endian):
- *     e4e7f110  15593bd1  1fdd0f50  c47120a3
- *     c7f4d1c7  0368c033  9aaa2204  4e6cd4c3
- *     466482d2  09aa9f07  05d7c214  a2028bd9
- *     d19c12b5  b94e16de  e883d0cb  4e3c50a2
  * ========================================================================= */
 static void test_chacha20_block(void) {
     uart_puts("\n[Test 3] chacha20_block - RFC 8439 sec 2.3.2\n");
@@ -140,7 +211,21 @@ static void test_chacha20_block(void) {
     };
     static uint32_t output[16];
 
+    /* Reconstruir el estado inicial para mostrarlo (RFC 8439 sec 2.3) */
+    static const uint32_t init_state[16] = {
+        0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
+        0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
+        0x13121110, 0x17161514, 0x1b1a1918, 0x1f1e1d1c,
+        0x00000001, 0x09000000, 0x4a000000, 0x00000000
+    };
+
+    uart_puts("  Estado inicial:\n");
+    uart_print_state(init_state);
+
     chacha20_block(key, 1, nonce, output);
+
+    uart_puts("  Keystream generado (64 bytes):\n");
+    uart_print_state(output);
 
     static const uint32_t expected[16] = {
         0xe4e7f110, 0x15593bd1, 0x1fdd0f50, 0xc47120a3,
@@ -149,23 +234,27 @@ static void test_chacha20_block(void) {
         0xd19c12b5, 0xb94e16de, 0xe883d0cb, 0x4e3c50a2
     };
 
+    uart_puts("  Verificacion (16 palabras):\n");
     for (int i = 0; i < 16; i++) {
-        check("word", output[i], expected[i]);
+        /* Formato: "word[ 0]" o "word[15]" */
+        char label[9] = "word[  ]";
+        label[5] = (i < 10) ? ' ' : ('0' + i / 10);
+        label[6] = '0' + (i % 10);
+        check(label, output[i], expected[i]);
     }
 }
 
 /* =========================================================================
- * Test 4: chacha20_encrypt - RFC 8439, sección 2.4.2
+ * Test 4: chacha20_encrypt/decrypt - RFC 8439, sección 2.4.2
  *
- * Cifra el texto "Sunscreen" (114 bytes, 2 bloques) y verifica los
- * primeros bytes del resultado contra el ciphertext del RFC.
- *
+ * Cifra el texto "Sunscreen" (114 bytes), verifica el ciphertext del RFC,
+ * luego descifra y demuestra que se recupera el mensaje original.
  * Key     = 00 01 02 ... 1f
  * Nonce   = 00 00 00 00  00 00 00 4a  00 00 00 00
  * Counter = 1
  * ========================================================================= */
 static void test_chacha20_encrypt(void) {
-    uart_puts("\n[Test 4] chacha20_encrypt - RFC 8439 sec 2.4.2\n");
+    uart_puts("\n[Test 4] chacha20_encrypt/decrypt - RFC 8439 sec 2.4.2\n");
 
     static const uint32_t key[8] = {
         0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
@@ -187,20 +276,54 @@ static void test_chacha20_encrypt(void) {
         0x74,0x2e
     };
     static uint8_t ciphertext[114];
+    static uint8_t decrypted[114];
+
+    /* --- Cifrado --- */
+    uart_puts("  Plaintext (texto original):\n");
+    uart_print_ascii(plaintext, 114);
+    uart_puts("  Plaintext (hex):\n");
+    uart_print_bytes(plaintext, 114);
 
     chacha20_encrypt(key, 1, nonce, plaintext, ciphertext, 114);
 
-    /* Primeros 4 bytes esperados del bloque 1 (RFC 8439): 6e 2e 35 9a */
-    check("ct[0]", ciphertext[0],  0x6e);
-    check("ct[1]", ciphertext[1],  0x2e);
-    check("ct[2]", ciphertext[2],  0x35);
-    check("ct[3]", ciphertext[3],  0x9a);
+    uart_puts("\n  --- Cifrado ---\n");
+    uart_puts("  Ciphertext (hex):\n");
+    uart_print_bytes(ciphertext, 114);
+    uart_puts("  Ciphertext (ascii):\n");
+    uart_print_ascii(ciphertext, 114);
 
-    /* Primeros 4 bytes esperados del bloque 2 (RFC 8439): 07 ca 0d bf */
-    check("ct[64]", ciphertext[64], 0x07);
-    check("ct[65]", ciphertext[65], 0xca);
-    check("ct[66]", ciphertext[66], 0x0d);
-    check("ct[67]", ciphertext[67], 0xbf);
+    /* --- Descifrado (ChaCha20 es simetrico: encrypt == decrypt) --- */
+    chacha20_encrypt(key, 1, nonce, ciphertext, decrypted, 114);
+
+    uart_puts("\n  --- Descifrado ---\n");
+    uart_puts("  Decrypted (texto recuperado):\n");
+    uart_print_ascii(decrypted, 114);
+
+    /* --- Verificacion RFC: bytes del ciphertext --- */
+    uart_puts("\n  Verificacion RFC (ciphertext):\n");
+    check_byte("ct[  0]", ciphertext[0],  0x6e);
+    check_byte("ct[  1]", ciphertext[1],  0x2e);
+    check_byte("ct[  2]", ciphertext[2],  0x35);
+    check_byte("ct[  3]", ciphertext[3],  0x9a);
+    check_byte("ct[ 64]", ciphertext[64], 0x07);
+    check_byte("ct[ 65]", ciphertext[65], 0xca);
+    check_byte("ct[ 66]", ciphertext[66], 0x0d);
+    check_byte("ct[ 67]", ciphertext[67], 0xbf);
+
+    /* --- Verificacion roundtrip: decrypted == plaintext --- */
+    uart_puts("\n  Verificacion roundtrip (decrypt == plaintext):\n");
+    int all_ok = 1;
+    for (int i = 0; i < 114; i++) {
+        if (decrypted[i] != plaintext[i]) { all_ok = 0; break; }
+    }
+    tests_run++;
+    uart_puts("    decrypt(encrypt(plaintext)) == plaintext (114 bytes): ");
+    if (all_ok) {
+        uart_puts("[PASS]\n");
+        tests_passed++;
+    } else {
+        uart_puts("[FAIL]\n");
+    }
 }
 
 /* =========================================================================
@@ -208,7 +331,7 @@ static void test_chacha20_encrypt(void) {
  * ========================================================================= */
 void main(void) {
     uart_puts("========================================\n");
-    uart_puts("  ChaCha20 - RISC-V\n");
+    uart_puts("  ChaCha20 - RISC-V (RFC 8439)\n");
     uart_puts("========================================\n");
 
     test_quarter_round_basico();
