@@ -275,14 +275,23 @@ static void test_chacha20_encrypt(void) {
         0x63,0x72,0x65,0x65,0x6e,0x20,0x77,0x6f,0x75,0x6c,0x64,0x20,0x62,0x65,0x20,0x69,
         0x74,0x2e
     };
+    static uint8_t keystream[128];   /* 2 bloques de 64 bytes */
     static uint8_t ciphertext[114];
     static uint8_t decrypted[114];
 
-    /* --- Cifrado --- */
+    /* Generar keystream: bloque 1 (counter=1) y bloque 2 (counter=2) */
+    chacha20_block(key, 1, nonce, (uint32_t *)(keystream +  0));
+    chacha20_block(key, 2, nonce, (uint32_t *)(keystream + 64));
+
+    /* --- Plaintext --- */
     uart_puts("  Plaintext (texto original):\n");
     uart_print_ascii(plaintext, 114);
     uart_puts("  Plaintext (hex):\n");
     uart_print_bytes(plaintext, 114);
+
+    /* --- Keystream --- */
+    uart_puts("\n  Keystream (hex, 2 bloques = 128 bytes):\n");
+    uart_print_bytes(keystream, 128);
 
     chacha20_encrypt(key, 1, nonce, plaintext, ciphertext, 114);
 
@@ -327,6 +336,83 @@ static void test_chacha20_encrypt(void) {
 }
 
 /* =========================================================================
+ * Test 5: cifrado/descifrado multi-bloque (3 bloques)
+ *
+ * Mensaje de 189 bytes → 3 bloques de keystream (counter 0, 1, 2).
+ * No hay vector RFC para este test: solo verifica el roundtrip.
+ * ========================================================================= */
+static void test_multi_block(void) {
+    uart_puts("\n[Test 5] Multi-bloque (3 bloques) - mensaje personalizado\n");
+
+    static const uint32_t key[8] = {
+        0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c,
+        0x13121110, 0x17161514, 0x1b1a1918, 0x1f1e1d1c
+    };
+    static const uint32_t nonce[3] = {
+        0x00000000, 0x4a000000, 0x00000000
+    };
+
+    /* Mensaje de 189 bytes: ocupa 3 bloques (0-63, 64-127, 128-188) */
+    static const uint8_t plaintext[] =
+        "Hola profe, este es un test de ChaCha20 en RISC-V. "
+        "Si usted puede leer esto despues de desencriptar, "
+        "significa que el algoritmo funciona correctamente "
+        "con tres bloques de 64 bytes cada uno!";
+    const uint32_t len = (uint32_t)(sizeof(plaintext) - 1);
+
+    static uint8_t keystream[192];   /* 3 bloques de 64 bytes */
+    static uint8_t ciphertext[192];
+    static uint8_t decrypted[192];
+
+    /* Generar keystream: bloques con counter 0, 1, 2 */
+    chacha20_block(key, 0, nonce, (uint32_t *)(keystream +   0));
+    chacha20_block(key, 1, nonce, (uint32_t *)(keystream +  64));
+    chacha20_block(key, 2, nonce, (uint32_t *)(keystream + 128));
+
+    uart_puts("  Longitud: ");
+    uart_putu(len);
+    uart_puts(" bytes → bloque 1 (0-63), bloque 2 (64-127), bloque 3 (128-");
+    uart_putu(len - 1);
+    uart_puts(")\n");
+
+    uart_puts("\n  Plaintext:\n");
+    uart_print_ascii(plaintext, len);
+
+    uart_puts("\n  Keystream (hex, 3 bloques = 192 bytes):\n");
+    uart_print_bytes(keystream, 192);
+
+    chacha20_encrypt(key, 0, nonce, plaintext, ciphertext, len);
+
+    uart_puts("\n  --- Cifrado ---\n");
+    uart_puts("  Ciphertext (hex):\n");
+    uart_print_bytes(ciphertext, len);
+    uart_puts("  Ciphertext (ascii):\n");
+    uart_print_ascii(ciphertext, len);
+
+    chacha20_encrypt(key, 0, nonce, ciphertext, decrypted, len);
+
+    uart_puts("\n  --- Descifrado ---\n");
+    uart_puts("  Decrypted:\n");
+    uart_print_ascii(decrypted, len);
+
+    uart_puts("\n  Verificacion roundtrip:\n");
+    int all_ok = 1;
+    for (uint32_t i = 0; i < len; i++) {
+        if (decrypted[i] != plaintext[i]) { all_ok = 0; break; }
+    }
+    tests_run++;
+    uart_puts("    decrypt(encrypt(plaintext)) == plaintext (");
+    uart_putu(len);
+    uart_puts(" bytes, 3 bloques): ");
+    if (all_ok) {
+        uart_puts("[PASS]\n");
+        tests_passed++;
+    } else {
+        uart_puts("[FAIL]\n");
+    }
+}
+
+/* =========================================================================
  * Entry point
  * ========================================================================= */
 void main(void) {
@@ -338,6 +424,7 @@ void main(void) {
     test_quarter_round_estado();
     test_chacha20_block();
     test_chacha20_encrypt();
+    test_multi_block();
 
     uart_puts("\n========================================\n");
     uart_puts("Resultado: ");
