@@ -188,7 +188,7 @@ Estado del `working_state` en el label `add_initial_state`, justo después de co
 
 ### 3.3 Verificación del vector de prueba del RFC 8439
 
-Salida de QEMU mostrando la verificación del vector del Test 3 (`chacha20_block`), con los 16 words del keystream comparados contra los valores del Apéndice A.2 del RFC 8439.
+Salida de QEMU mostrando la verificación de un vector del RFC 8439 para `chacha20_block` (keystream de 64 bytes = 16 palabras), con comparación palabra-a-palabra contra el RFC.
 
 ![Verificación del vector de prueba](docs/img/keystream.png)
 
@@ -196,7 +196,7 @@ Salida de QEMU mostrando la verificación del vector del Test 3 (`chacha20_block
 
 ## 4. Bitácora de un bug
 
-### Bug: el contador de bloque no se incrementaba entre bloques
+### Bug 1: el contador de bloque no se incrementaba entre bloques
 
 **Descripción**
 
@@ -229,7 +229,7 @@ El valor de `s1` no cambiaba entre iteraciones, confirmando que faltaba la instr
 
 Al implementar el bucle de encrypt, se escribió la lógica de avance de punteros (`plaintext`, `ciphertext`, `len`) pero se omitió la línea que incrementa el counter para el siguiente bloque.
 
-**Corrección (commit `4da8619`)**
+**Corrección**
 
 Se agregó una sola instrucción después del bucle XOR, antes de volver al inicio del bucle principal:
 
@@ -260,20 +260,57 @@ Después del fix, la segunda iteración muestra `$s1 = 0x2`, y el Test 4 pasa co
 
 ---
 
+### Bug 2: el Vector RFC A.2 #3 fallaba por una palabra mal escrita en la clave del test
+
+**Descripción**
+
+Durante la validación del vector “Jabberwocky” (RFC 8439 Apéndice A.2, Vector #3, counter=42), el ciphertext generado no coincidía con el esperado.
+
+**Detección (comparación en memoria con GDB)**
+
+Se puso un breakpoint en `chacha20_encrypt` (donde el ABI garantiza que `a0` es el puntero a `key`) y se inspeccionó la clave en memoria para verificar que sus bytes coincidieran con el RFC:
+
+```gdb
+break chacha20_encrypt
+target remote :1234
+continue
+
+# a0 apunta a key (primer argumento de chacha20_encrypt)
+x/8xw $a0
+```
+
+Se observó que la última palabra de la key no correspondía a los bytes del RFC (un solo byte estaba incorrecto), lo cual cambia completamente el keystream y el ciphertext.
+
+**Causa raíz**
+
+Typo en la constante del test: la última palabra del key estaba escrita como `0xc0757520` cuando debía ser `0xc0757020` para representar los bytes `20 70 75 c0` del RFC en little-endian.
+
+**Corrección**
+
+Se corrigió el literal en `main.c`:
+
+```c
+... 0xbc5cca9d, 0xc0757020
+```
+
+**Verificación post-fix**
+
+El vector RFC A.2 #3 pasó y el ciphertext generado coincidió byte-a-byte con el RFC.
+
+---
+
 ## 5. Análisis de resultados
 
 ### 5.1 Corrección del algoritmo
 
-Los cuatro vectores del RFC 8439 pasan exitosamente:
+La suite de pruebas se compone de:
 
-| Test | RFC | Checks | Resultado |
-|---|---|:---:|:---:|
-| `chacha20_quarter_round` (aislado) | 2.1.1 | 4/4 | PASS |
-| `chacha20_quarter_round` (en estado 4×4) | 2.2.1 | 4/4 | PASS |
-| `chacha20_block` (keystream completo) | 2.3.2 | 16/16 | PASS |
-| `chacha20_encrypt` (114 bytes) | 2.4.2 | 8/8 | PASS |
+- Tests incrementales (quarter round aislado, quarter round sobre estado, `chacha20_block`, `chacha20_encrypt` con roundtrip, y un test multi-bloque)
+- Vectores oficiales del RFC 8439:
+    - Apéndice A.1 (Block Function): 5 vectores, 16 palabras verificadas por vector
+    - Apéndice A.2 (Encryption): 3 vectores, verificación del ciphertext completo
 
-La salida total es `26/26 tests pasaron`, lo que valida que la implementación produce exactamente los mismos resultados que la especificación oficial.
+Cuando todo está correcto, el resumen final reporta `117/117 tests pasaron`, lo que indica coincidencia exacta con los valores del RFC y consistencia de los tests de roundtrip.
 
 ### 5.2 Adherencia al RFC 8439
 

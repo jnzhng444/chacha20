@@ -11,6 +11,8 @@ Implementación del algoritmo de cifrado de flujo ChaCha20 (RFC 8439) en ensambl
 ├── Dockerfile              # Imagen Docker con toolchain RISC-V y QEMU compilado desde fuente
 ├── README.md               # Este archivo
 ├── DOCUMENTACION.md        # Documentación técnica del diseño e implementación
+├── docs/                   # Evidencias (capturas) para la documentación
+│   └── img/                # PNGs usados en DOCUMENTACION.md
 ├── run.sh                  # Lanza el contenedor Docker/Podman de forma interactiva
 └── src/
     ├── chacha20.s          # Implementación principal en ensamblador RISC-V
@@ -73,97 +75,101 @@ Esto genera `chacha20.elf` con símbolos de depuración DWARF 4 (`-g3`).
 | `-nostdlib -ffreestanding` | Entorno bare-metal sin biblioteca estándar |
 | `-g3 -gdwarf-4` | Símbolos de depuración completos para GDB |
 
-### 4. Ejecutar con QEMU
+### 4. Ejecutar con QEMU (modo depuración con GDB)
 
 ```bash
 # Dentro del contenedor, en src/
 ./run-qemu.sh
 ```
 
-QEMU arranca la máquina virtual RISC-V, ejecuta `chacha20.elf` y muestra la salida de los tests por UART en la terminal. La ejecución termina en un loop infinito al finalizar todos los tests.
+`run-qemu.sh` inicia QEMU con servidor GDB en `:1234` y deja la CPU detenida (`-S`) esperando a que GDB se conecte. La salida por UART (tests) aparece después de ejecutar `continue` en GDB.
 
-Salida esperada:
+Salida esperada (resumen):
 
 ```
 ========================================
-  ChaCha20 - RISC-V
+  ChaCha20 - RISC-V (RFC 8439)
 ========================================
 
-[Test 1] Quarter Round - RFC 8439 sec 2.1.1
-  a: got=0xea2a92f4  expected=0xea2a92f4  [PASS]
-  b: got=0xcb1cf8ce  expected=0xcb1cf8ce  [PASS]
-  c: got=0x4581472e  expected=0x4581472e  [PASS]
-  d: got=0x5881c4bb  expected=0x5881c4bb  [PASS]
 
-[Test 2] Quarter Round en estado 4x4 - RFC 8439 sec 2.2.1
-  ...
-
-[Test 3] chacha20_block - RFC 8439 sec 2.3.2
-  ...
-
-[Test 4] chacha20_encrypt - RFC 8439 sec 2.4.2
-  ...
+...
 
 ========================================
-Resultado: 26/26 tests pasaron
+Resultado: 117/117 tests pasaron
 Estado: OK
 ========================================
+```
+
+### 5. Abrir una sesión de depuración (GDB)
+
+En otra terminal del host (con el contenedor ya corriendo):
+
+```bash
+docker exec -it rvqemu /bin/bash
+```
+
+Dentro de esa shell del contenedor:
+
+```bash
+cd /home/rvqemu-dev/workspace/src
+gdb-multiarch chacha20.elf
+```
+
+Y dentro de GDB:
+
+```gdb
+target remote :1234
+
+# breakpoints (elige los que necesites)
+break main
+break chacha20_block
+break chacha20_encrypt
+
+continue
 ```
 
 ---
 
 ## Ejecutar los casos de prueba y verificar vectores del RFC
 
-Los tests están en `src/main.c` y verifican cuatro vectores del Apéndice A del RFC 8439:
+Los tests están en `src/main.c` y combinan:
 
-| Test | Sección RFC | Qué verifica |
-|---|---|---|
-| Test 1 | §2.1.1 | `chacha20_quarter_round`: 4 palabras aisladas |
-| Test 2 | §2.2.1 | `chacha20_quarter_round`: índices (2,7,8,13) en estado 4×4 |
-| Test 3 | §2.3.2 | `chacha20_block`: 16 palabras del keystream completo |
-| Test 4 | §2.4.2 | `chacha20_encrypt`: 8 bytes del texto cifrado "Sunscreen" |
+- Tests incrementales (quarter round, block, encrypt/decrypt, multi-bloque)
+- Vectores oficiales del RFC 8439 (Apéndice A.1 y A.2)
 
-Para correr los tests:
+| Grupo | Qué se verifica |
+|---|---|
+| Tests 1–5 | Correctitud incremental y roundtrip (encrypt==decrypt), incluyendo multi-bloque |
+| RFC 8439 A.1 (Vectores #1–#5) | `chacha20_block`: keystream de 64 bytes (16 palabras) por vector |
+| RFC 8439 A.2 (Vectores #1–#3) | `chacha20_encrypt`: ciphertext completo para longitudes 64, 375 y 127 bytes |
+
+Para correr los tests (con GDB, usando el flujo recomendado del repo):
 
 ```bash
-# Compilar
+# 1) En el host
+cd chacha20
+./run.sh
+
+# 2) En el contenedor
 cd /home/rvqemu-dev/workspace/src
 ./build.sh
-
-# Ejecutar (QEMU sin GDB, sale solo)
-qemu-system-riscv32 -machine virt -nographic -bios none -kernel chacha20.elf
-```
-
-> **Nota:** Presionar `Ctrl+A` seguido de `X` para salir de QEMU si el programa no termina.
-
----
-
-## Depuración con GDB
-
-Se necesitan **dos terminales** dentro del contenedor.
-
-### Terminal 1 — Iniciar QEMU en modo GDB
-
-```bash
-cd /home/rvqemu-dev/workspace/src
 ./run-qemu.sh
-```
 
-QEMU queda detenido en `0x80000000` esperando la conexión de GDB.
-
-### Terminal 2 — Conectar GDB
-
-```bash
-# Abrir otra shell en el contenedor (desde el host)
+# 3) En otra terminal del host
 docker exec -it rvqemu /bin/bash
-# o si usas Podman:
-podman exec -it rvqemu /bin/bash
 
+# 4) En esa shell
 cd /home/rvqemu-dev/workspace/src
 gdb-multiarch chacha20.elf
 ```
 
-### Comandos GDB de referencia
+En GDB, ejecuta `target remote :1234`, coloca breakpoints si quieres, y luego `continue`. Si todos los vectores pasan verás al final `Estado: OK`.
+
+> **Nota:** El programa termina en un loop infinito. Para salir de QEMU: `Ctrl+A` y luego `X`.
+
+---
+
+## Comandos GDB de referencia
 
 ```gdb
 # Conectarse al servidor QEMU
@@ -206,4 +212,15 @@ target remote :1234
 break add_initial_state      # justo antes de la suma con el estado inicial
 continue
 x/16xw $s3                   # imprimir working_state después de las rondas
+```
+
+### Ejemplo: correr todos los tests de un solo
+
+```gdb
+target remote :1234
+break main                # imprimir working_state
+continue
+continue
+
+#deberia mostrarse todos los tests de una en la otra terminal.
 ```
